@@ -7,4 +7,17 @@ const isVarName = (str) => {
   return regex.test(str)
 }
 
-module.exports = isVarName
+const sanitizeName = (name) => (isVarName(name) ? `.${name}` : `['${name}']`)
+
+const uniqueName = (existingObject, attempt, index = 0) => {
+  const newAttempt = index > 0 ? attempt + index : attempt
+
+  const existingArray = Object.values(existingObject)
+  if (existingArray.find(({ name }) => name === newAttempt)) {
+    return uniqueName(attempt, index + 1)
+  }
+
+  return newAttempt
+}
+
+module.exports = { isVarName, sanitizeName, uniqueName }

@@ -14,6 +14,8 @@ const cli = meow(
 
 	Options
     --types, -t         Add Typescript definitions
+    --jsx               Use .jsx instead of .js (default: false)
+    --outputFolder -o   Output folder (default: '.')
     --keepnames, -k     Keep original names
     --keepgroups, -K    Keep (empty) groups
     --meta, -m          Include metadata (as userData)
@@ -30,26 +32,24 @@ const cli = meow(
 `,
   {
     flags: {
-      types: { type: 'boolean', alias: 't' },
-      keepnames: { type: 'boolean', alias: 'k' },
-      keepgroups: { type: 'boolean', alias: 'K' },
-      shadows: { type: 'boolean', alias: 's' },
-      printwidth: { type: 'number', alias: 'p', default: 1000 },
-      meta: { type: 'boolean', alias: 'm' },
-      precision: { type: 'number', alias: 'p', default: 2 },
-      draco: { type: 'string', alias: 'd' },
-      root: { type: 'string', alias: 'r' },
-      instance: { type: 'boolean', alias: 'i' },
-      instanceall: { type: 'boolean', alias: 'I' },
-      transform: { type: 'boolean', alias: 'T' },
-      aggressive: { type: 'boolean', alias: 'a' },
-      debug: { type: 'boolean', alias: 'D' },
+      source: { type: 'string', default: 'models' },
+      static: { type: 'string', default: 'public' },
+      components: { type: 'string', default: 'src' },
     },
   }
 )
 
-if (cli.input.length === 0) {
+const source = cli.input?.[0] ?? cli.flags.source
+
+const config = {
+  aggressive: true,
+  instance: true,
+  precision: 2,
+  shadows: true,
+}
+
+if (!source) {
   console.log(cli.help)
 } else {
-  render(React.createElement(App, { file: cli.input[0], ...cli.flags }))
+  render(React.createElement(App, { ...cli.flags, config }))
 }

@@ -2,105 +2,13 @@ const THREE = require('three')
 const isVarName = require('./isVarName')
 
 function parse(fileName, gltf, options = {}) {
-  const url = (fileName.toLowerCase().startsWith('http') ? '' : '/') + fileName
+  const { root } = options
+  const sanitisedRoot = root.charAt(0) === '/' || root.charAt(0) === '.' ? root : `./${root}`
+  const url = fileName.replace(sanitisedRoot, '')
+
+  const modelName = options.modelName ?? 'Model'
   const animations = gltf.animations
   const hasAnimations = animations.length > 0
-
-  // Collect all objects
-  const objects = []
-  gltf.scene.traverse((child) => objects.push(child))
-
-  // Browse for duplicates
-  const duplicates = {
-    names: {},
-    materials: {},
-    geometries: {},
-  }
-
-  function uniqueName(attempt, index = 0) {
-    const newAttempt = index > 0 ? attempt + index : attempt
-    if (Object.values(duplicates.geometries).find(({ name }) => name === newAttempt) === undefined) return newAttempt
-    else return uniqueName(attempt, index + 1)
-  }
-
-  gltf.scene.traverse((child) => {
-    if (child.isMesh) {
-      if (child.material) {
-        if (!duplicates.materials[child.material.name]) {
-          duplicates.materials[child.material.name] = 1
-        } else {
-          duplicates.materials[child.material.name]++
-        }
-      }
-      if (child.geometry) {
-        if (!duplicates.geometries[child.geometry.uuid]) {
-          let name = (child.name || 'Part').replace(/[^a-zA-Z]/g, '')
-          name = name.charAt(0).toUpperCase() + name.slice(1)
-          duplicates.geometries[child.geometry.uuid] = {
-            count: 1,
-            name: uniqueName(name),
-            node: 'nodes' + sanitizeName(child.name),
-          }
-        } else {
-          duplicates.geometries[child.geometry.uuid].count++
-        }
-      }
-    }
-  })
-
-  // Prune duplicate geometries
-  if (!options.instanceall) {
-    for (let key of Object.keys(duplicates.geometries)) {
-      const duplicate = duplicates.geometries[key]
-      if (duplicate.count === 1) delete duplicates.geometries[key]
-    }
-  }
-
-  const hasInstances = (options.instance || options.instanceall) && Object.keys(duplicates.geometries).length > 0
-
-  function sanitizeName(name) {
-    return isVarName(name) ? `.${name}` : `['${name}']`
-  }
-
-  const rNbr = (number) => {
-    return parseFloat(number.toFixed(Math.round(options.precision || 2)))
-  }
-
-  const rDeg = (number) => {
-    const abs = Math.abs(Math.round(parseFloat(number) * 100000))
-    for (let i = 1; i <= 10; i++) {
-      if (abs === Math.round(parseFloat(Math.PI / i) * 100000))
-        return `${number < 0 ? '-' : ''}Math.PI${i > 1 ? ' / ' + i : ''}`
-    }
-    for (let i = 1; i <= 10; i++) {
-      if (abs === Math.round(parseFloat(Math.PI * i) * 100000))
-        return `${number < 0 ? '-' : ''}Math.PI${i > 1 ? ' * ' + i : ''}`
-    }
-    return rNbr(number)
-  }
-
-  function printTypes(objects, animations) {
-    let meshes = objects.filter((o) => o.isMesh && o.__removed === undefined)
-    let bones = objects.filter((o) => o.isBone && !(o.parent && o.parent.isBone) && o.__removed === undefined)
-    let materials = [...new Set(objects.filter((o) => o.material && o.material.name).map((o) => o.material))]
-
-    let animationTypes = ''
-    if (animations.length) {
-      animationTypes = `\n
-  type ActionName = ${animations.map((clip, i) => `"${clip.name}"`).join(' | ')};
-  type GLTFActions = Record<ActionName, THREE.AnimationAction>;\n`
-    }
-
-    return `\ntype GLTFResult = GLTF & {
-    nodes: {
-      ${meshes.map(({ name, type }) => (isVarName(name) ? name : `['${name}']`) + ': THREE.' + type).join(',')}
-      ${bones.map(({ name, type }) => (isVarName(name) ? name : `['${name}']`) + ': THREE.' + type).join(',')}
-    }
-    materials: {
-      ${materials.map(({ name, type }) => (isVarName(name) ? name : `['${name}']`) + ': THREE.' + type).join(',')}
-    }
-  }\n${animationTypes}`
-  }
 
   function getType(obj) {
     let type = obj.type.charAt(0).toLowerCase() + obj.type.slice(1)
@@ -314,45 +222,17 @@ function parse(fileName, gltf, options = {}) {
     return result
   }
 
+  const scene = print(objects, gltf, gltf.scene)
+
+  /// IGNORE BELOW
+
   function printAnimations(animations) {
     return animations.length
       ? `\nconst { actions } = useAnimations${options.types ? '<GLTFActions>' : ''}(animations, group)`
       : ''
   }
 
-  function parseExtras(extras) {
-    if (extras) {
-      return (
-        Object.keys(extras)
-          .map((key) => `${key}: ${extras[key]}`)
-          .join('\n') + '\n'
-      )
-    } else return ''
-  }
-
-  function p(obj, line) {
-    console.log(
-      [...new Array(line * 2)].map(() => ' ').join(''),
-      obj.type,
-      obj.name,
-      'pos:',
-      obj.position.toArray().map(rNbr),
-      'scale:',
-      obj.scale.toArray().map(rNbr),
-      'rot:',
-      [obj.rotation.x, obj.rotation.y, obj.rotation.z].map(rNbr),
-      'mat:',
-      obj.material ? `${obj.material.name}-${obj.material.uuid.substring(0, 8)}` : ''
-    )
-    obj.children.forEach((o) => p(o, line + 1))
-  }
-
-  if (options.debug) p(gltf.scene, 0)
-
-  const scene = print(objects, gltf, gltf.scene)
-  return `/*
-Auto-generated by: https://github.com/pmndrs/gltfjsx
-${parseExtras(gltf.parser.json.asset && gltf.parser.json.asset.extras)}*/
+  const printImports = `
         ${options.types ? `\nimport * as THREE from 'three'` : ''}
         import React, { useRef ${hasInstances ? ', useMemo' : ''} } from 'react'
         import { useGLTF, ${hasInstances ? 'Merged, ' : ''} ${
@@ -361,33 +241,37 @@ ${parseExtras(gltf.parser.json.asset && gltf.parser.json.asset.extras)}*/
         ${scene.includes('OrthographicCamera') ? 'OrthographicCamera,' : ''}
         ${hasAnimations ? 'useAnimations' : ''} } from '@react-three/drei'
         ${options.types ? 'import { GLTF } from "three-stdlib"' : ''}
+    `
+
+  return `
+        ${printImports}
         ${options.types ? printTypes(objects, animations) : ''}
 
         ${
           hasInstances
             ? `
-        export default function InstancedModel(props) {
-          const { nodes } = useGLTF('${url}'${options.draco ? `, ${JSON.stringify(options.draco)}` : ''})${
+            const Instanced${modelName} = (props) => {
+            const { nodes } = useGLTF('${url}'${options.draco ? `, ${JSON.stringify(options.draco)}` : ''})${
                 options.types ? ' as GLTFResult' : ''
               }
-          const instances = useMemo(() => ({
-            ${Object.values(duplicates.geometries)
-              .map((v) => `${v.name}: ${v.node}`)
-              .join(', ')}
-          }), [nodes])
-          return (
-            <Merged meshes={instances} {...props}>
-              {(instances) => <Model instances={instances} />}
-            </Merged>
-          )
-        }
+            const instances = useMemo(() => ({
+                ${Object.values(duplicates.geometries)
+                  .map((v) => `${v.name}: ${v.node}`)
+                  .join(', ')}
+            }), [nodes])
+            return (
+                <Merged meshes={instances} {...props}>
+                {(instances) => <Model instances={instances} />}
+                </Merged>
+            )
+            }
         `
             : ''
         }
 
-        ${hasInstances ? '' : 'export default'} function Model({ ${hasInstances ? 'instances, ' : ''}...props }${
+        const ${modelName} = ({ ${hasInstances ? 'instances, ' : ''}...props }${
     options.types ? ": JSX.IntrinsicElements['group']" : ''
-  }) {
+  }) => {
           const group = ${options.types ? 'useRef<THREE.Group>()' : 'useRef()'}
           const { nodes, materials${hasAnimations ? ', animations' : ''} } = useGLTF('${url}'${
     options.draco ? `, ${JSON.stringify(options.draco)}` : ''
@@ -398,6 +282,7 @@ ${parseExtras(gltf.parser.json.asset && gltf.parser.json.asset.extras)}*/
             </group>
           )
         }
+        export default ${hasInstances ? 'Instanced' : ''}${modelName}
 
 useGLTF.preload('${url}')`
 }
